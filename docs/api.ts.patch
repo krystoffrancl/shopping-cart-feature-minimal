@@ -1,0 +1,54 @@
+diff --git a/frontend/src/services/api.ts b/frontend/src/services/api.ts
+index b7f0d08..04c94c1 100644
+--- a/frontend/src/services/api.ts
++++ b/frontend/src/services/api.ts
+@@ -210,7 +210,49 @@ export class DreamFarmAPI {
+ 
+     return response.json();
+   }
++
++  /**
++   * Get shopping cart contents
++   */
++  async getCart() {
++    const response = await fetch(`${this.baseUrl}/cart`, {
++      headers: {
++        ...this.getAuthHeader(),
++      },
++    });
++
++    if (!response.ok) {
++      throw new Error(`Failed to get cart: ${response.statusText}`);
++    }
++
++    return response.json();
++  }
++
++  /**
++   * Update cart item quantity (set to 0 to remove)
++   */
++  async updateCartItem(productId: string, quantity: number) {
++    const response = await fetch(`${this.baseUrl}/cart/item`, {
++      method: 'PUT',
++      headers: {
++        'Content-Type': 'application/json',
++        ...this.getAuthHeader(),
++      },
++      body: JSON.stringify({ product_id: productId, quantity }),
++    });
++
++    if (!response.ok) {
++      const errorData = await response.json().catch(() => ({}));
++      throw new Error(errorData.detail || `Failed to update cart item: ${response.statusText}`);
++    }
++
++    return response.json();
++  }
+ }
+ 
+ // Default API instance
+ export const dreamFarmAPI = new DreamFarmAPI();
++
++// Convenience exports for shopping cart
++export const getCart = () => dreamFarmAPI.getCart();
++export const updateCartItem = (productId: string, quantity: number) => dreamFarmAPI.updateCartItem(productId, quantity);

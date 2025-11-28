@@ -1,0 +1,20 @@
+diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+index f7a0bde..b531023 100644
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -2,6 +2,7 @@ import { AssistantRuntimeProvider, useLocalRuntime } from '@assistant-ui/react';
+ import { TooltipProvider } from '@/components/ui/tooltip';
+ import { Thread } from '@/components/thread';
+ import { ThreadList } from '@/components/thread-list';
++import { ShoppingCartButton } from '@/components/shopping-cart';
+ import { dreamFarmChatAdapter } from './services/chatAdapter';
+ import './App.css';
+ import { useEffect, useState } from 'react';
+@@ -81,6 +82,7 @@ function App() {
+               <p className="ml-4 text-sm text-gray-600">Your AI-powered marketplace guide</p>
+             </div>
+             <div className="flex items-center gap-3">
++              <ShoppingCartButton />
+               <div className="flex items-center gap-2 text-sm text-gray-700">
+                 <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-green-100 text-green-700 font-semibold">{auth.username?.charAt(0)?.toUpperCase()}</span>
+                 <span>{auth.username}</span>

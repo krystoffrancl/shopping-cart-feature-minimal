@@ -1,0 +1,385 @@
+diff --git a/agents/dreamfarm-agent/src/services/openai_service.py b/agents/dreamfarm-agent/src/services/openai_service.py
+index 0e8477c..cf1d245 100644
+--- a/agents/dreamfarm-agent/src/services/openai_service.py
++++ b/agents/dreamfarm-agent/src/services/openai_service.py
+@@ -30,6 +30,8 @@ from src.services.stock_service import StockService
+ from src.services.memory_search_service import MemorySearchService
+ from src.services.user_profile_service import UserProfileService
+ from src.services.chef_agent_client import ChefAgentClient
++from src.services.farmer_tools_client import FarmerToolsClient
++from src.services.shopping_cart_service import ShoppingCartService
+ import os
+ 
+ from openai import AsyncOpenAI
+@@ -84,6 +86,37 @@ class OpenAIService:
+                 logger.info("Chef Agent disabled; skipping chef_agent tool init")
+         except Exception as ce:  # pragma: no cover
+             logger.warning(f"Chef Agent client init failed: {ce}")
++        # Farmer Tools MCP client (direct HTTP wrapper for MCP tools)
++        self._farmer_tools_client: FarmerToolsClient | None = None
++        try:
++            farmer_cfg = getattr(self._app_config, "farmer_tools", None)
++            # Check if FARMER_TOOLS_DIRECT_CLIENT is enabled (separate from MCP registration)
++            direct_client_enabled = os.getenv("FARMER_TOOLS_DIRECT_CLIENT", "false").lower() in ["true","1","yes","on"]
++            if direct_client_enabled and farmer_cfg and farmer_cfg.enabled and farmer_cfg.mcp_url and farmer_cfg.mcp_api_key:
++                self._farmer_tools_client = FarmerToolsClient(
++                    mcp_url=farmer_cfg.mcp_url,
++                    api_key=farmer_cfg.mcp_api_key
++                )
++                logger.info(f"Farmer Tools MCP client initialized: url={farmer_cfg.mcp_url}")
++            else:
++                logger.info("Farmer Tools direct client disabled; skipping farmer_tools_client tool init")
++        except Exception as fe:  # pragma: no cover
++            logger.warning(f"Farmer Tools MCP client init failed: {fe}")
++        # Shopping Cart service (user-bound cart with stock validation)
++        self._shopping_cart: ShoppingCartService | None = None
++        try:
++            cart_enabled = os.getenv("SHOPPING_CART_ENABLED", "false").lower() in ["true","1","yes","on"]
++            stock_api_url = os.getenv("STOCK_API_URL", "http://localhost:8011")
++            logger.info(f"Shopping cart configuration: enabled={cart_enabled}, stock_api={stock_api_url}")
++            if cart_enabled:
++                self._shopping_cart = ShoppingCartService(self._app_config, stock_api_url)
++                logger.info(f"Shopping cart service initialized successfully (stock_api={stock_api_url})")
++            else:
++                logger.info("Shopping cart disabled; skipping cart tool init")
++        except Exception as se:  # pragma: no cover
++            import traceback
++            logger.error(f"Shopping cart init failed: {se}")
++            logger.error(f"Traceback: {traceback.format_exc()}")
+         # Local stock custom tool
+         self._stock_service: StockService | None = stock_service
+         if self._stock_service is None:
+@@ -119,11 +152,13 @@ class OpenAIService:
+         except Exception as ge:  # pragma: no cover
+             logger.warning(f"Graph search init failed: {ge}")
+         logger.info(
+-            "Initialized OpenAI service base_url=%s model=%s stock_tool=%s chef_agent=%s tavily=%s viz_mcp=%s agentic=%s graph=%s memory_search=%s",
++            "Initialized OpenAI service base_url=%s model=%s stock_tool=%s chef_agent=%s farmer_tools_client=%s shopping_cart=%s tavily=%s viz_mcp=%s agentic=%s graph=%s memory_search=%s",
+             getattr(self.client, "base_url", None),
+             self.model_name,
+             bool(self._stock_service and self._stock_service.enabled),
+             bool(self._chef_agent),
++            bool(self._farmer_tools_client),
++            bool(self._shopping_cart),
+             bool(self._tavily and self._tavily.enabled),
+             bool(self._visualization_mcp and self._visualization_mcp.enabled),
+             bool(self._agentic_search and self._agentic_search.enabled),
+@@ -439,7 +474,7 @@ Use this tool when users ask about:
+ - Getting pricing quotes for culinary services
+ - Booking or ordering chef services
+ 
+-The chef agent handles the complete workflow including search, availability checking, 
++The chef agent handles the complete workflow including search, availability checking,
+ pricing calculation, and order placement. Pass the user's query verbatim to the agent.""",
+                     "parameters": {
+                         "type": "object",
+@@ -453,7 +488,185 @@ pricing calculation, and order placement. Pass the user's query verbatim to the
+                     },
+                 }
+             )
+-        
++
++        # Farmer Tools MCP client function tools (direct HTTP wrapper)
++        if self._farmer_tools_client:
++            logger.info("Registering farmer_tools function tools (farmer_tools_client enabled)")
++
++            # get_current_time tool
++            tools.append(
++                {
++                    "type": "function",
++                    "name": "get_current_time",
++                    "description": "Get the current server time in ISO 8601 format (UTC). Use this when you need to know the current date/time for time-sensitive operations.",
++                    "parameters": {
++                        "type": "object",
++                        "properties": {},
++                        "required": [],
++                    },
++                }
++            )
++
++            # get_seasonal_tips tool
++            tools.append(
++                {
++                    "type": "function",
++                    "name": "get_seasonal_tips",
++                    "description": "Get a list of seasonal products (up to 10) for the current time period. Use this to recommend in-season produce and products to users.",
++                    "parameters": {
++                        "type": "object",
++                        "properties": {},
++                        "required": [],
++                    },
++                }
++            )
++
++            # get_weather tool
++            tools.append(
++                {
++                    "type": "function",
++                    "name": "get_weather",
++                    "description": "Get current weather information for a specific location. Returns mocked weather data including temperature, humidity, wind, and precipitation.",
++                    "parameters": {
++                        "type": "object",
++                        "properties": {
++                            "country": {
++                                "type": "string",
++                                "description": "Country name (e.g., 'USA', 'Czech Republic')"
++                            },
++                            "city": {
++                                "type": "string",
++                                "description": "City name (e.g., 'New York', 'Prague')"
++                            }
++                        },
++                        "required": ["country", "city"],
++                    },
++                }
++            )
++
++        # Shopping Cart function tools
++        if self._shopping_cart:
++            logger.info("Registering shopping_cart function tools (shopping_cart enabled)")
++
++            # add_to_cart tool
++            tools.append(
++                {
++                    "type": "function",
++                    "name": "add_to_cart",
++                    "description": """Add one or more products to the user's shopping cart.
++Automatically validates stock availability and prevents adding more items than available in stock.
++Each product gets a random price generated when first added to cart.
++
++Use this when user asks to:
++- Add products to cart
++- Purchase or buy items
++- Put items in basket
++- Order products
++
++The tool supports adding multiple products in a single call.""",
++                    "parameters": {
++                        "type": "object",
++                        "properties": {
++                            "items": {
++                                "type": "array",
++                                "description": "List of products to add to cart",
++                                "items": {
++                                    "type": "object",
++                                    "properties": {
++                                        "product_name": {
++                                            "type": "string",
++                                            "description": "Product name (fuzzy search supported)"
++                                        },
++                                        "quantity": {
++                                            "type": "integer",
++                                            "description": "Quantity to add (must be positive)"
++                                        },
++                                        "category": {
++                                            "type": "string",
++                                            "description": "Optional category filter (e.g., 'Vegetables', 'Fruits', 'Dairy')"
++                                        }
++                                    },
++                                    "required": ["product_name", "quantity"]
++                                }
++                            }
++                        },
++                        "required": ["items"],
++                    },
++                }
++            )
++
++            # view_cart tool
++            tools.append(
++                {
++                    "type": "function",
++                    "name": "view_cart",
++                    "description": """View the current contents of the user's shopping cart.
++Returns all items with quantities, prices, and current stock availability.
++
++Use this when user asks to:
++- See their cart
++- View basket
++- Check what's in cart
++- Show cart contents""",
++                    "parameters": {
++                        "type": "object",
++                        "properties": {},
++                        "required": [],
++                    },
++                }
++            )
++
++            # update_cart_item tool
++            tools.append(
++                {
++                    "type": "function",
++                    "name": "update_cart_item",
++                    "description": """Update the quantity of a specific item in the cart.
++Set quantity to 0 to remove the item from cart.
++Validates stock availability before updating.
++
++Use this when user asks to:
++- Change quantity of item
++- Increase/decrease amount
++- Update cart item
++- Remove specific item (quantity=0)""",
++                    "parameters": {
++                        "type": "object",
++                        "properties": {
++                            "product_id": {
++                                "type": "string",
++                                "description": "UUID of the product to update"
++                            },
++                            "quantity": {
++                                "type": "integer",
++                                "description": "New quantity (0 to remove item)"
++                            }
++                        },
++                        "required": ["product_id", "quantity"],
++                    },
++                }
++            )
++
++            # clear_cart tool
++            tools.append(
++                {
++                    "type": "function",
++                    "name": "clear_cart",
++                    "description": """Remove all items from the user's shopping cart.
++
++Use this when user asks to:
++- Empty cart
++- Clear basket
++- Remove all items
++- Start over with cart""",
++                    "parameters": {
++                        "type": "object",
++                        "properties": {},
++                        "required": [],
++                    },
++                }
++            )
++
+         return tools or None
+ 
+     def _get_openai_client(self) -> AsyncOpenAI:
+@@ -658,6 +871,122 @@ pricing calculation, and order placement. Pass the user's query verbatim to the
+                     else:
+                         logger.warning("memory_write_profile disabled or missing requirements: user_id=%s prof_enabled=%s service=%s", user_id, prof_enabled_flag, bool(self._user_profile_service))
+                         output_payload = {"applied": False, "error": "disabled"}
++                elif name == "query_chef_services":
++                    if self._chef_agent:
++                        try:
++                            parsed = json.loads(raw_args) if isinstance(raw_args, str) else {}
++                        except Exception:
++                            parsed = {}
++                        message = parsed.get("message", "")
++                        logger.info("query_chef_services tool called: message_preview=%s", message[:100] if message else "(empty)")
++                        try:
++                            chef_response = await self._chef_agent.query(message)
++                            output_payload = {"response": chef_response}
++                        except Exception as ce:  # pragma: no cover
++                            logger.warning(f"Chef Agent query failed: {ce}")
++                            output_payload = {"response": "Sorry, I couldn't reach the chef services at this time."}
++                    else:
++                        output_payload = {"response": "Chef services are currently unavailable."}
++                elif name == "get_current_time":
++                    if self._farmer_tools_client:
++                        logger.info("get_current_time tool called")
++                        try:
++                            time_result = await self._farmer_tools_client.get_current_time()
++                            output_payload = {"time": time_result}
++                        except Exception as fe:  # pragma: no cover
++                            logger.warning(f"Farmer Tools get_current_time failed: {fe}")
++                            output_payload = {"time": None, "error": "Failed to get time"}
++                    else:
++                        output_payload = {"time": None, "error": "Farmer tools client not available"}
++                elif name == "get_seasonal_tips":
++                    if self._farmer_tools_client:
++                        logger.info("get_seasonal_tips tool called")
++                        try:
++                            tips_result = await self._farmer_tools_client.get_seasonal_tips()
++                            output_payload = {"tips": tips_result}
++                        except Exception as fe:  # pragma: no cover
++                            logger.warning(f"Farmer Tools get_seasonal_tips failed: {fe}")
++                            output_payload = {"tips": [], "error": "Failed to get seasonal tips"}
++                    else:
++                        output_payload = {"tips": [], "error": "Farmer tools client not available"}
++                elif name == "get_weather":
++                    if self._farmer_tools_client:
++                        try:
++                            parsed = json.loads(raw_args) if isinstance(raw_args, str) else {}
++                        except Exception:
++                            parsed = {}
++                        country = parsed.get("country", "")
++                        city = parsed.get("city", "")
++                        logger.info("get_weather tool called: country=%s city=%s", country, city)
++                        try:
++                            weather_result = await self._farmer_tools_client.get_weather(country, city)
++                            output_payload = weather_result
++                        except Exception as fe:  # pragma: no cover
++                            logger.warning(f"Farmer Tools get_weather failed: {fe}")
++                            output_payload = {"error": "Failed to get weather"}
++                    else:
++                        output_payload = {"error": "Farmer tools client not available"}
++
++                # Shopping Cart tools
++                elif name == "add_to_cart":
++                    if self._shopping_cart:
++                        try:
++                            parsed = json.loads(raw_args) if isinstance(raw_args, str) else {}
++                        except Exception:
++                            parsed = {}
++                        items = parsed.get("items", [])
++                        logger.info("add_to_cart tool called: items=%d user_id=%s", len(items), user_id)
++                        try:
++                            result = await self._shopping_cart.add_to_cart(user_id, items, user_is_vip)
++                            output_payload = result
++                        except Exception as ce:  # pragma: no cover
++                            logger.warning(f"Shopping cart add_to_cart failed: {ce}")
++                            output_payload = {"success": False, "error": str(ce)}
++                    else:
++                        output_payload = {"success": False, "error": "Shopping cart not available"}
++
++                elif name == "view_cart":
++                    if self._shopping_cart:
++                        logger.info("view_cart tool called: user_id=%s", user_id)
++                        try:
++                            cart_data = await self._shopping_cart.get_cart(user_id)
++                            output_payload = cart_data
++                        except Exception as ce:  # pragma: no cover
++                            logger.warning(f"Shopping cart view_cart failed: {ce}")
++                            output_payload = {"error": str(ce)}
++                    else:
++                        output_payload = {"error": "Shopping cart not available"}
++
++                elif name == "update_cart_item":
++                    if self._shopping_cart:
++                        try:
++                            parsed = json.loads(raw_args) if isinstance(raw_args, str) else {}
++                        except Exception:
++                            parsed = {}
++                        product_id = parsed.get("product_id", "")
++                        quantity = parsed.get("quantity", 0)
++                        logger.info("update_cart_item tool called: product_id=%s quantity=%d user_id=%s", product_id, quantity, user_id)
++                        try:
++                            result = await self._shopping_cart.update_cart_item(user_id, product_id, quantity)
++                            output_payload = result
++                        except Exception as ce:  # pragma: no cover
++                            logger.warning(f"Shopping cart update_cart_item failed: {ce}")
++                            output_payload = {"success": False, "error": str(ce)}
++                    else:
++                        output_payload = {"success": False, "error": "Shopping cart not available"}
++
++                elif name == "clear_cart":
++                    if self._shopping_cart:
++                        logger.info("clear_cart tool called: user_id=%s", user_id)
++                        try:
++                            result = await self._shopping_cart.clear_cart(user_id)
++                            output_payload = result
++                        except Exception as ce:  # pragma: no cover
++                            logger.warning(f"Shopping cart clear_cart failed: {ce}")
++                            output_payload = {"success": False, "error": str(ce)}
++                    else:
++                        output_payload = {"success": False, "error": "Shopping cart not available"}
++
+                 else:
+                     logger.info("Ignoring unsupported function call name=%s", name)
+                     continue

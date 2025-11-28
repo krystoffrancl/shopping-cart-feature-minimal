@@ -1,0 +1,115 @@
+diff --git a/agents/dreamfarm-agent/src/main.py b/agents/dreamfarm-agent/src/main.py
+index 3db5b78..c2ca02e 100644
+--- a/agents/dreamfarm-agent/src/main.py
++++ b/agents/dreamfarm-agent/src/main.py
+@@ -1715,6 +1715,55 @@ async def send_message_stream(thread_id: str, payload: SendMessageRequest, user_
+                                                 })
+                                         except Exception as exec_e:  # noqa: BLE001
+                                             logger.warning("❌ DREAMFARM: Chef Agent function execution error: %s", exec_e)
++
++                                    # Shopping Cart tools
++                                    elif name in ("add_to_cart", "view_cart", "update_cart_item", "clear_cart"):
++                                        logger.info("🛒 SHOPPING CART: Model called %s", name)
++                                        try:
++                                            cart_service = getattr(openai_service, "_shopping_cart", None)
++                                            if cart_service:
++                                                raw_args = getattr(item, "arguments", "{}")
++                                                try:
++                                                    parsed_args = json.loads(raw_args) if isinstance(raw_args, str) else {}
++                                                except Exception:
++                                                    parsed_args = {}
++
++                                                cart_result = None
++                                                if name == "add_to_cart":
++                                                    items = parsed_args.get("items", [])
++                                                    cart_result = await cart_service.add_to_cart(username, items, is_vip)
++                                                elif name == "view_cart":
++                                                    cart_result = await cart_service.get_cart(username)
++                                                elif name == "update_cart_item":
++                                                    product_id = parsed_args.get("product_id", "")
++                                                    quantity = parsed_args.get("quantity", 0)
++                                                    cart_result = await cart_service.update_cart_item(username, product_id, quantity)
++                                                elif name == "clear_cart":
++                                                    cart_result = await cart_service.clear_cart(username)
++
++                                                logger.info("✅ SHOPPING CART: %s completed", name)
++                                                pending_outputs.append({
++                                                    "type": "function_call_output",
++                                                    "call_id": getattr(item, "call_id", getattr(item, "id", "")),
++                                                    "output": json.dumps(cart_result),
++                                                })
++                                                # Notify frontend about cart update
++                                                yield "\nDF_META:" + json.dumps({"kind": "cart_updated"}, ensure_ascii=False) + "\n"
++                                            else:
++                                                logger.warning("⚠️ SHOPPING CART: disabled - cart_service not available")
++                                                pending_outputs.append({
++                                                    "type": "function_call_output",
++                                                    "call_id": getattr(item, "call_id", getattr(item, "id", "")),
++                                                    "output": json.dumps({"error": "Shopping cart not available"}),
++                                                })
++                                        except Exception as cart_e:  # noqa: BLE001
++                                            logger.error("❌ SHOPPING CART: %s execution failed: %s", name, cart_e)
++                                            pending_outputs.append({
++                                                "type": "function_call_output",
++                                                "call_id": getattr(item, "call_id", getattr(item, "id", "")),
++                                                "output": json.dumps({"error": f"Cart operation failed: {str(cart_e)}"}),
++                                            })
++
+                                     else:
+                                         # Unknown/unhandled function call - add empty output to avoid breaking loop
+                                         logger.warning(f"Unhandled function call in streaming: {name}")
+@@ -2042,6 +2091,54 @@ async def rename_thread(thread_id: str, payload: ThreadRenameRequest, user_ctx:
+     return _rename_thread_internal(thread_id, payload.title, username)
+ 
+ 
++@app.get("/cart")
++async def get_cart(user_ctx: tuple[str, bool, dict] = Depends(_require_user)):
++    """Get current user's shopping cart contents.
++
++    Returns:
++        Cart summary with items, total price, and total item count
++    """
++    username, user_is_vip, _ = user_ctx
++
++    if not openai_service._shopping_cart:  # type: ignore[attr-defined]
++        raise HTTPException(status_code=503, detail="Shopping cart service not available")
++
++    try:
++        cart_data = await openai_service._shopping_cart.get_cart(username)  # type: ignore[attr-defined]
++        return cart_data
++    except Exception as e:
++        logger.error(f"Failed to get cart for user {username}: {e}")
++        raise HTTPException(status_code=500, detail=f"Failed to retrieve cart: {str(e)}")
++
++
++@app.put("/cart/item")
++async def update_cart_item(payload: dict, user_ctx: tuple[str, bool, dict] = Depends(_require_user)):
++    """Update quantity of item in cart or remove it.
++
++    Args:
++        payload: Dict with product_id (str) and quantity (int, 0 to remove)
++
++    Returns:
++        Updated cart data
++    """
++    username, _, _ = user_ctx
++    product_id = payload.get("product_id")
++    quantity = payload.get("quantity")
++
++    if not product_id or quantity is None:
++        raise HTTPException(status_code=400, detail="product_id and quantity are required")
++
++    if not openai_service._shopping_cart:  # type: ignore[attr-defined]
++        raise HTTPException(status_code=503, detail="Shopping cart service not available")
++
++    try:
++        result = await openai_service._shopping_cart.update_cart_item(username, product_id, quantity)  # type: ignore[attr-defined]
++        return result
++    except Exception as e:
++        logger.error(f"Failed to update cart item for user {username}: {e}")
++        raise HTTPException(status_code=500, detail=f"Failed to update cart: {str(e)}")
++
++
+ @app.websocket("/voice/{thread_id}")
+ async def voice_endpoint(websocket: WebSocket, thread_id: str):
+     """WebSocket endpoint for voice/realtime conversations.
