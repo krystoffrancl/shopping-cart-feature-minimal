@@ -20,6 +20,7 @@ cp frontend/src/components/shopping-cart.tsx YOUR_PROJECT/frontend/src/component
 ### 2️⃣ Aplikuj 5 patches
 
 **Automaticky:**
+
 ```bash
 cd YOUR_PROJECT
 patch -p3 < PATH_TO_THIS_REPO/docs/pyproject.toml.patch
@@ -87,8 +88,6 @@ Klikni na košík ikonu v UI → modal s položkami
 | **[README.md](README.md)** | Přehled feature, screenshots, architektura |
 | **[INSTALLATION.md](INSTALLATION.md)** | Detailní instalační návod krok-za-krokem |
 | **[TECHNICAL_REPORT.md](TECHNICAL_REPORT.md)** | Technický rozbor pro VŠ spolužáky |
-| **[CHANGES.md](CHANGES.md)** | Přehled všech změn (nové + upravené soubory) |
-| **[INDEX.md](INDEX.md)** | Navigace v repozitáři |
 | **[QUICKSTART.md](QUICKSTART.md)** | Tento soubor - 5min rychlý start |
 
 ---
@@ -132,14 +131,14 @@ Klikni na košík ikonu v UI → modal s položkami
 
 ## 🤝 Pro koho je tohle
 
-- ✅ **Účastníci kurzu** "Pokročilé AI Aplikace" (Václav Kosar)
+- ✅ **Účastníci kurzu** "Pokročilé AI Aplikace"
 - ✅ **Kdo už má Dream Farm projekt** z kurzu
 - ✅ **Kdo chce přidat shopping cart funkci** bez kompletního forku
 
 ---
 
 **Stack**: FastAPI, PostgreSQL (pg_trgm), React, OpenAI Responses API
-**Autor**: Účastník kurzu
+**Autor**: Kryštof Francl
 **Licence**: Extension projektu z kurzu
 
 ---
