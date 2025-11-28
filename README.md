@@ -310,7 +310,7 @@ Pro úplnost - původní kurz obsahoval:
 - **Observability**: OpenTelemetry + Grafana Tempo
 - **Deployment**: Kubernetes (AKS) + Terraform
 
-📖 **[Kompletní dokumentace →](docs/Design.md)**
+📖 **[Kompletní dokumentace →](https://github.com/Global-Classes-CZE/Advanced-AI-Applications/blob/main/docs/Design.md)**
 
 ---
 
